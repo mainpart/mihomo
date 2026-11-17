@@ -2,6 +2,7 @@ package statistic
 
 import (
 	"net"
+	"net/netip"
 	"sync"
 	"testing"
 
@@ -66,5 +67,19 @@ func TestUserTrafficConcurrent(t *testing.T) {
 	_, users := m.UserTrafficSnapshot()
 	if users["alice"].Upload != workers*5 {
 		t.Fatalf("lost concurrent updates: %#v", users)
+	}
+}
+
+func TestUserTrafficSeparatesUsersBehindNAT(t *testing.T) {
+	m := &Manager{}
+	sharedIP := netip.MustParseAddr("192.0.2.1")
+	for user, size := range map[string]int{"alice": 3, "bob": 7} {
+		tracker := NewTCPTracker(testConn{}, m, &C.Metadata{InUser: user, SrcIP: sharedIP}, nil, 0, 0, true)
+		_, _ = tracker.Write(make([]byte, size))
+		_ = tracker.Close()
+	}
+	_, users := m.UserTrafficSnapshot()
+	if users["alice"].Upload != 3 || users["bob"].Upload != 7 || len(users) != 2 {
+		t.Fatalf("users with a shared address were not separated: %#v", users)
 	}
 }
