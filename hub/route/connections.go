@@ -21,6 +21,12 @@ func connectionRouter() http.Handler {
 	return r
 }
 
+func userTraffic(w http.ResponseWriter, r *http.Request) {
+	epoch, users := statistic.DefaultManager.UserTrafficSnapshot()
+	w.Header().Set("Cache-Control", "no-store")
+	render.JSON(w, r, map[string]any{"epoch": epoch, "users": users})
+}
+
 func getConnections(w http.ResponseWriter, r *http.Request) {
 	if !(r.Header.Get("Upgrade") == "websocket") {
 		snapshot := statistic.DefaultManager.Snapshot()
