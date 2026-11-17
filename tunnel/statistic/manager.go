@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/common/atomic"
+	"github.com/metacubex/mihomo/common/utils"
 	"github.com/metacubex/mihomo/common/xsync"
 	"github.com/metacubex/mihomo/component/memory"
 )
@@ -20,6 +21,7 @@ func init() {
 		uploadTotal:   atomic.NewInt64(0),
 		downloadTotal: atomic.NewInt64(0),
 		pid:           int32(os.Getpid()),
+		epoch:         utils.NewUUIDV4().String(),
 	}
 
 	go DefaultManager.handle()
@@ -27,6 +29,8 @@ func init() {
 
 type Manager struct {
 	connections   xsync.Map[string, Tracker]
+	users         xsync.Map[string, *userCounter]
+	epoch         string
 	uploadTemp    atomic.Int64
 	downloadTemp  atomic.Int64
 	uploadBlip    atomic.Int64
@@ -35,6 +39,34 @@ type Manager struct {
 	downloadTotal atomic.Int64
 	pid           int32
 	memory        uint64
+}
+
+type userCounter struct {
+	upload   atomic.Int64
+	download atomic.Int64
+}
+
+type UserTraffic struct {
+	Upload   int64 `json:"upload"`
+	Download int64 `json:"download"`
+}
+
+// UserTrafficSnapshot contains process-lifetime payload bytes for authenticated inbound users.
+func (m *Manager) UserTrafficSnapshot() (string, map[string]UserTraffic) {
+	users := make(map[string]UserTraffic)
+	m.users.Range(func(name string, counter *userCounter) bool {
+		users[name] = UserTraffic{Upload: counter.upload.Load(), Download: counter.download.Load()}
+		return true
+	})
+	return m.epoch, users
+}
+
+func (m *Manager) userCounter(name string) *userCounter {
+	if name == "" {
+		return nil
+	}
+	counter, _ := m.users.LoadOrStore(name, &userCounter{})
+	return counter
 }
 
 func (m *Manager) Join(c Tracker) {
