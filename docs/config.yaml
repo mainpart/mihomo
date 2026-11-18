@@ -389,6 +389,7 @@ proxies: # socks5
     # skip-cert-verify: true
     # name-cert-verify: example.com # 仅修改证书 DNSName 校验目标，不修改 SNI
     # udp: true
+    # resolver-dns: ["10.0.0.53", "10.0.0.54"] # UDP destination DNS through this SOCKS; literal IPs, port 53, requires udp. First DNS reply wins, including NXDOMAIN.
     # ip-version: ipv6
 
   # http

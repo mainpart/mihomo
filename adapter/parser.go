@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/metacubex/mihomo/adapter/outbound"
 	"github.com/metacubex/mihomo/common/structure"
@@ -42,6 +43,11 @@ func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error)
 		}
 		proxy, err = outbound.NewShadowSocksR(*ssrOption)
 	case "socks5":
+		for key, value := range mapping {
+			if strings.EqualFold(strings.ReplaceAll(key, "_", "-"), "resolver-dns") && value == nil {
+				return nil, fmt.Errorf("resolver-dns must not be null")
+			}
+		}
 		socksOption := &outbound.Socks5Option{BasicOption: basicOption}
 		err = decoder.Decode(mapping, socksOption)
 		if err != nil {

@@ -20,6 +20,12 @@ type SingMux struct {
 	onlyTcp bool
 }
 
+func (s *SingMux) ClearDNSCache() {
+	if clearer, ok := s.ProxyAdapter.(interface{ ClearDNSCache() }); ok {
+		clearer.ClearDNSCache()
+	}
+}
+
 type SingMuxOption struct {
 	Enabled        bool         `proxy:"enabled,omitempty"`
 	Protocol       string       `proxy:"protocol,omitempty"`

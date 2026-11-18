@@ -11,14 +11,18 @@ import (
 
 	N "github.com/metacubex/mihomo/common/net"
 	"github.com/metacubex/mihomo/component/ca"
+	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/transport/socks5"
 
+	"github.com/metacubex/randv2"
 	"github.com/metacubex/tls"
 )
 
 type Socks5 struct {
 	*Base
+	localResolver  resolver.Resolver
 	option         *Socks5Option
 	user           string
 	pass           string
@@ -29,18 +33,70 @@ type Socks5 struct {
 
 type Socks5Option struct {
 	BasicOption
-	Name           string `proxy:"name"`
-	Server         string `proxy:"server"`
-	Port           int    `proxy:"port"`
-	UserName       string `proxy:"username,omitempty"`
-	Password       string `proxy:"password,omitempty"`
-	TLS            bool   `proxy:"tls,omitempty"`
-	UDP            bool   `proxy:"udp,omitempty"`
-	SkipCertVerify bool   `proxy:"skip-cert-verify,omitempty"`
-	NameCertVerify string `proxy:"name-cert-verify,omitempty"`
-	Fingerprint    string `proxy:"fingerprint,omitempty"`
-	Certificate    string `proxy:"certificate,omitempty"`
-	PrivateKey     string `proxy:"private-key,omitempty"`
+	Name           string   `proxy:"name"`
+	Server         string   `proxy:"server"`
+	Port           int      `proxy:"port"`
+	UserName       string   `proxy:"username,omitempty"`
+	Password       string   `proxy:"password,omitempty"`
+	TLS            bool     `proxy:"tls,omitempty"`
+	UDP            bool     `proxy:"udp,omitempty"`
+	ResolverDNS    []string `proxy:"resolver-dns,omitempty"`
+	SkipCertVerify bool     `proxy:"skip-cert-verify,omitempty"`
+	NameCertVerify string   `proxy:"name-cert-verify,omitempty"`
+	Fingerprint    string   `proxy:"fingerprint,omitempty"`
+	Certificate    string   `proxy:"certificate,omitempty"`
+	PrivateKey     string   `proxy:"private-key,omitempty"`
+}
+
+// ResolveUDP keeps the corporate DNS view attached to this SOCKS outbound.
+func (ss *Socks5) ResolveUDP(ctx context.Context, metadata *C.Metadata) error {
+	if ss.localResolver == nil {
+		return ss.Base.ResolveUDP(ctx, metadata)
+	}
+	if metadata.Host == "" {
+		return nil
+	}
+	if ip, err := netip.ParseAddr(metadata.Host); err == nil {
+		metadata.DstIP = ip.Unmap()
+		return nil
+	}
+
+	var ips []netip.Addr
+	var err error
+	switch {
+	case ss.prefer == C.IPv6Only:
+		if resolver.DisableIPv6 {
+			return resolver.ErrIPv6Disabled
+		}
+		ips, err = ss.localResolver.LookupIPv6(ctx, metadata.Host)
+	case ss.prefer == C.IPv4Only || resolver.DisableIPv6:
+		ips, err = ss.localResolver.LookupIPv4(ctx, metadata.Host)
+	default:
+		ips, err = ss.localResolver.LookupIP(ctx, metadata.Host)
+	}
+	if err != nil {
+		return fmt.Errorf("can't resolve ip: %w", err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("can't resolve ip: %w: %s", resolver.ErrIPNotFound, metadata.Host)
+	}
+	ipv4, ipv6 := resolver.SortationAddr(ips)
+	if (ss.prefer == C.IPv6Only && len(ipv6) == 0) || (ss.prefer == C.IPv4Only && len(ipv4) == 0) || (len(ipv4) == 0 && len(ipv6) == 0) {
+		return fmt.Errorf("can't resolve ip: %w: %s", resolver.ErrIPVersion, metadata.Host)
+	}
+	if ss.prefer == C.IPv6Only || (ss.prefer == C.IPv6Prefer && len(ipv6) > 0) || len(ipv4) == 0 {
+		metadata.DstIP = ipv6[randv2.IntN(len(ipv6))]
+	} else {
+		metadata.DstIP = ipv4[randv2.IntN(len(ipv4))]
+	}
+	return nil
+}
+
+// ClearDNSCache also clears this outbound's isolated DNS view.
+func (ss *Socks5) ClearDNSCache() {
+	if ss.localResolver != nil {
+		ss.localResolver.ClearCache()
+	}
 }
 
 // StreamConnContext implements C.ProxyAdapter
@@ -210,6 +266,29 @@ func NewSocks5(option Socks5Option) (*Socks5, error) {
 		tlsConfig:      tlsConfig,
 	}
 	outbound.dialer = option.NewDialer(outbound.DialOptions())
+	if option.ResolverDNS != nil {
+		if len(option.ResolverDNS) == 0 {
+			return nil, errors.New("resolver-dns must not be empty")
+		}
+		if !option.UDP {
+			return nil, errors.New("resolver-dns requires udp")
+		}
+		servers := make([]dns.NameServer, 0, len(option.ResolverDNS))
+		for _, value := range option.ResolverDNS {
+			ip, err := netip.ParseAddr(value)
+			if err == nil && ip.Zone() != "" {
+				return nil, fmt.Errorf("resolver-dns requires a unicast IP: %q", value)
+			}
+			if err == nil {
+				ip = ip.Unmap()
+			}
+			if err != nil || ip.Zone() != "" || ip.IsUnspecified() || ip.IsMulticast() || ip == netip.AddrFrom4([4]byte{255, 255, 255, 255}) {
+				return nil, fmt.Errorf("resolver-dns requires a unicast IP: %q", value)
+			}
+			servers = append(servers, dns.NameServer{Addr: net.JoinHostPort(ip.String(), "53"), ProxyAdapter: outbound})
+		}
+		outbound.localResolver = dns.NewResolver(dns.Config{Main: servers, IPv6: !resolver.DisableIPv6})
+	}
 	return outbound, nil
 }
 

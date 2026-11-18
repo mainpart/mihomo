@@ -376,6 +376,12 @@ type autoCloseProxyAdapter struct {
 	closeErr  error
 }
 
+func (p *autoCloseProxyAdapter) ClearDNSCache() {
+	if clearer, ok := p.ProxyAdapter.(interface{ ClearDNSCache() }); ok {
+		clearer.ClearDNSCache()
+	}
+}
+
 func (p *autoCloseProxyAdapter) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
 	c, err := p.ProxyAdapter.DialContext(ctx, metadata)
 	if err != nil {
