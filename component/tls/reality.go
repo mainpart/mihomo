@@ -29,8 +29,9 @@ import (
 const RealityMaxShortIDLen = 8
 
 type RealityConfig struct {
-	PublicKey *ecdh.PublicKey
-	ShortID   [RealityMaxShortIDLen]byte
+	PublicKey     *ecdh.PublicKey
+	ShortID       [RealityMaxShortIDLen]byte
+	ClientVersion [3]byte
 
 	SupportX25519MLKEM768 bool
 }
@@ -71,9 +72,7 @@ func GetRealityConn(ctx context.Context, conn net.Conn, fingerprint UClientHello
 		binary.BigEndian.PutUint64(hello.SessionId, uint64(ntp.Now().Unix()))
 
 		copy(hello.SessionId[8:], realityConfig.ShortID[:])
-		hello.SessionId[0] = 1
-		hello.SessionId[1] = 8
-		hello.SessionId[2] = 2
+		copy(hello.SessionId[:3], realityConfig.ClientVersion[:])
 
 		//log.Debugln("REALITY hello.sessionId[:16]: %v", hello.SessionId[:16])
 
